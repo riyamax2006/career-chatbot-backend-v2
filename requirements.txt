@@ -1,0 +1,17 @@
+# Career Recommendation API - Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# Web Framework
+flask>=2.0.0
+
+# Cross-Origin Resource Sharing (for frontend integration)
+flask-cors>=3.0.0
+
+# Machine Learning / NLP
+scikit-learn>=1.0.0
+
+# Numerical Computing
+numpy>=1.20.0
+
+# WSGI Server for Production (optional)
+# gunicorn>=20.1.0
