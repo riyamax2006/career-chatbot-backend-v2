@@ -128,7 +128,7 @@ def debug_terms():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
+import os
 if __name__ == '__main__':
     print("=" * 60)
     print("Career Recommendation API Server (TF-IDF NLP)")
@@ -140,7 +140,11 @@ if __name__ == '__main__':
     print("=" * 60)
     print()
     
-    # Cloud-ready configuration:
-    # - host="0.0.0.0" binds to all interfaces
-    # - port=5001 avoids macOS AirPlay conflict (port 5000)
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    port = int(os.environ.get("PORT", 5001))
+
+    app.run(
+        host="0.0.0.0",
+        port=port,
+        debug=False
+    )
+
