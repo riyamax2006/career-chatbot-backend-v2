@@ -12,16 +12,26 @@ NO rule-based matching - purely NLP-driven recommendations.
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
+import re
 
-from dataset import CAREERS, SALARY_BOUNDS, TIME_HORIZON_MAP
+from dataset import CAREERS
 
+# Terms to explicitly REMOVE from NLP query to prevent rules from polluting semantic matching
+IGNORE_TERMS = {
+    # Salary terms
+    "salary", "lpa", "compensation", "money", "pay", "earning", "entry", "growth", "premium", "rich", "wealth",
+    "high paying", "low paying", "0 to 6", "6 to 12", "above 12",
+    # Risk terms
+    "risk", "stable", "secure", "security", "startup", "corporate", "government", "entrepreneurial", "predictable",
+    "balanced", "volatile", "safe", "chance",
+    # Timeline terms
+    "immediate", "urgent", "start", "now", "years", "long term", "mid term", "future", "career path",
+    "progression", "experience", "seniority", "junior", "mid level", "senior level"
+}
 
 class CareerNLPModel:
     """
     TF-IDF based NLP model for career matching.
-    
-    Converts career descriptions into TF-IDF vectors and computes
-    cosine similarity with user query vectors.
     """
     
     def __init__(self):
@@ -30,9 +40,9 @@ class CareerNLPModel:
             lowercase=True,
             stop_words='english',
             ngram_range=(1, 2),  # Unigrams and bigrams
-            max_features=500,
+            max_features=None,   # Use all features
             min_df=1,
-            max_df=0.95
+            max_df=1.0  # Allow terms that appear in all documents if corpus is small
         )
         self.career_vectors = None
         self.career_corpus = None
@@ -52,27 +62,14 @@ class CareerNLPModel:
                 career['role'],
                 career['category'],
                 career['description'],
-                f"risk level {career['risk']}",
-                f"{career['risk']} risk appetite tolerance",
             ]
             
-            # Add keywords
+            # Add keywords (BOOSTED 5x to ensure strong matching)
             if 'keywords' in career:
-                text_parts.extend(career['keywords'])
-            
-            # Add salary context
-            salaries = career['salaries']
-            text_parts.append(f"entry salary {salaries['entry']} LPA")
-            text_parts.append(f"mid salary {salaries['mid']} LPA")
-            text_parts.append(f"senior salary {salaries['senior']} LPA")
-            
-            # Categorize salary levels
-            if salaries['entry'] <= 6:
-                text_parts.append("entry level salary range")
-            if 6 < salaries['mid'] <= 12:
-                text_parts.append("growth salary range mid-range")
-            if salaries['senior'] > 12:
-                text_parts.append("premium salary high compensation")
+                # Repeat keywords multiple times to increase TF (Term Frequency)
+                # This ensures that if a user searches for a keyword, it ranks highly.
+                boosted_keywords = (career['keywords'] * 5)
+                text_parts.extend(boosted_keywords)
             
             # Combine into single document
             document = ' '.join(text_parts)
@@ -82,148 +79,111 @@ class CareerNLPModel:
         """Fit TF-IDF vectorizer on career corpus."""
         self.career_vectors = self.vectorizer.fit_transform(self.career_corpus)
         print(f"[NLP Model] Trained on {len(CAREERS)} careers")
-        print(f"[NLP Model] Vocabulary size: {len(self.vectorizer.vocabulary_)}")
     
-    def _build_user_query(self, salary_range: str, time_horizon: str, 
-                          risk_appetite: str, skills: str = None) -> str:
+    def _clean_text(self, text: str) -> str:
+        """Remove rule-based terms from text."""
+        if not text:
+            return ""
+        
+        # Tokenize and filter
+        words = text.lower().split()
+        cleaned = [w for w in words if w not in IGNORE_TERMS]
+        
+        # Also remove multi-word phrases (naive approach)
+        text_clean = " ".join(cleaned)
+        for term in IGNORE_TERMS:
+            if " " in term: # If it's a phrase in ignore list
+                text_clean = text_clean.replace(term, "")
+                
+        return text_clean.strip()
+
+    def _expand_synonyms(self, text: str) -> str:
+        """Expand domain terms with synonyms to improve matching."""
+        # Simple synonym mapping for common career domains
+        synonyms = {
+            "healthcare": "medical doctor hospital health physician nurse",
+            "medical": "healthcare doctor hospital health",
+            "tech": "technology software engineering developer data ai",
+            "programming": "coding software development engineering",
+            "ai": "artificial intelligence machine learning data science",
+            "finance": "banking investment money accounting",
+            "business": "management corporate strategy consulting",
+        }
+        
+        words = text.lower().split()
+        expanded = list(words)
+        
+        for word in words:
+            if word in synonyms:
+                expanded.append(synonyms[word])
+                
+        return " ".join(expanded)
+
+    def _build_user_query(self, skills: str = "") -> str:
         """
         Construct a text query from user inputs.
         
-        This converts structured inputs into natural language that can be
-        compared against career descriptions using TF-IDF similarity.
-        
         Args:
-            salary_range: 'entry' | 'growth' | 'premium'
-            time_horizon: 'immediate' | 'mid_term' | 'long_term'
-            risk_appetite: 'low' | 'medium' | 'high'
-            skills: Optional free-text skills string
+            skills: User provided skills/intent
             
         Returns:
             Query string for TF-IDF matching
         """
-        query_parts = []
+        if not skills:
+            return ""
+
+        # 1. Clean the input (remove salary/risk/timeline terms)
+        clean_skills = self._clean_text(skills)
         
-        # Salary range context
-        if salary_range == 'entry':
-            query_parts.extend([
-                "entry level salary range",
-                "0 to 6 LPA",
-                "starting career fresh graduate"
-            ])
-        elif salary_range == 'growth':
-            query_parts.extend([
-                "growth salary range mid-range",
-                "6 to 12 LPA",
-                "career growth progression"
-            ])
-        elif salary_range == 'premium':
-            query_parts.extend([
-                "premium salary high compensation",
-                "above 12 LPA",
-                "senior level executive high paying"
-            ])
+        if not clean_skills:
+            return ""
+
+        # 2. Expand Synonyms
+        expanded_skills = self._expand_synonyms(clean_skills)
+
+        # 3. Construct Query: Skills repeated 3 times
+        # Repetition emphasizes these terms over any background noise
+        query = f"{expanded_skills} {expanded_skills} {expanded_skills}"
         
-        # Time horizon context
-        if time_horizon == 'immediate':
-            query_parts.extend([
-                "entry level entry salary",
-                "immediate opportunity available now",
-                "fresh graduate starting"
-            ])
-        elif time_horizon == 'mid_term':
-            query_parts.extend([
-                "mid level salary experience",
-                "2 to 5 years career progression",
-                "growth opportunity advancement"
-            ])
-        elif time_horizon == 'long_term':
-            query_parts.extend([
-                "senior level salary experience",
-                "5 plus years career established",
-                "senior executive leadership"
-            ])
-        
-        # Risk appetite context
-        if risk_appetite == 'low':
-            query_parts.extend([
-                "low risk stable secure",
-                "job security predictable growth",
-                "corporate government stable career"
-            ])
-        elif risk_appetite == 'medium':
-            query_parts.extend([
-                "medium risk balanced",
-                "moderate stability growth",
-                "balanced career opportunity"
-            ])
-        elif risk_appetite == 'high':
-            query_parts.extend([
-                "high risk appetite tolerance",
-                "high reward potential startup",
-                "entrepreneurial ambitious growth"
-            ])
-        
-        # Add user-provided skills (most important for matching)
-        if skills and skills.strip():
-            # Repeat skills 3x to boost their TF-IDF weight relative to the template text
-            # This ensures generic skills like "communication" aren't drowned out
-            skill_text = (skills.strip() + " ") * 3
-            query_parts.append(skill_text)
-        
-        return ' '.join(query_parts)
+        return query
     
-    def compute_similarity(self, salary_range: str, time_horizon: str,
-                          risk_appetite: str, skills: str = None) -> list:
-        """
-        Compute cosine similarity between user query and all careers.
-        
-        Args:
-            salary_range: 'entry' | 'growth' | 'premium'
-            time_horizon: 'immediate' | 'mid_term' | 'long_term'
-            risk_appetite: 'low' | 'medium' | 'high'
-            skills: Optional free-text skills string
-            
-        Returns:
-            List of (career_index, similarity_score) tuples, sorted by score descending
-        """
-        # Build query from user inputs
-        query = self._build_user_query(salary_range, time_horizon, risk_appetite, skills)
-        
-        # Vectorize query
-        query_vector = self.vectorizer.transform([query])
-        
-        # Compute cosine similarity with all careers
-        similarities = cosine_similarity(query_vector, self.career_vectors).flatten()
-        
-        # Create (index, score) pairs and sort by score descending
-        scored_indices = [(i, float(similarities[i])) for i in range(len(CAREERS))]
-        scored_indices.sort(key=lambda x: x[1], reverse=True)
-        
-        return scored_indices
-    
-    def get_recommendations(self, salary_range: str, time_horizon: str,
-                           risk_appetite: str, skills: str = None,
-                           top_k: int = None) -> list:
+    def get_recommendations(self, skills: str = "", top_k: int = None) -> list:
         """
         Get career recommendations based on NLP similarity.
         
         Args:
-            salary_range: 'entry' | 'growth' | 'premium'
-            time_horizon: 'immediate' | 'mid_term' | 'long_term'
-            risk_appetite: 'low' | 'medium' | 'high'
-            skills: Optional free-text skills string
+            skills: Free-text skills string
             top_k: Number of recommendations to return (None = all)
             
         Returns:
             List of dicts with career info and similarity scores
         """
-        # Get similarity scores
-        scored_indices = self.compute_similarity(
-            salary_range, time_horizon, risk_appetite, skills
-        )
+        query = self._build_user_query(skills)
         
-        # Build results with career data
+        if not query:
+            # Return empty or handling? 
+            # If no query, cosine similarity will be 0
+            # We return all with 0 score
+            results = []
+            for idx, career in enumerate(CAREERS):
+                results.append({
+                    'career': career,
+                    'similarity_score': 0.0,
+                    'index': idx
+                })
+            return results
+
+        # Vectorize query
+        query_vector = self.vectorizer.transform([query])
+        
+        # Compute cosine similarity
+        similarities = cosine_similarity(query_vector, self.career_vectors).flatten()
+        
+        # Build results
         results = []
+        scored_indices = [(i, float(similarities[i])) for i in range(len(CAREERS))]
+        scored_indices.sort(key=lambda x: x[1], reverse=True)
+        
         limit = top_k if top_k is not None else len(scored_indices)
         
         for idx, score in scored_indices[:limit]:
@@ -235,35 +195,11 @@ class CareerNLPModel:
             })
         
         return results
-    
-    def get_query_terms(self, salary_range: str, time_horizon: str,
-                        risk_appetite: str, skills: str = None) -> dict:
-        """
-        Get the TF-IDF terms and weights for a user query.
-        Useful for debugging and explainability.
-        """
-        query = self._build_user_query(salary_range, time_horizon, risk_appetite, skills)
-        query_vector = self.vectorizer.transform([query])
-        
-        # Get feature names and their weights
-        feature_names = self.vectorizer.get_feature_names_out()
-        weights = query_vector.toarray().flatten()
-        
-        # Get non-zero terms
-        non_zero = [(feature_names[i], weights[i]) for i in range(len(weights)) if weights[i] > 0]
-        non_zero.sort(key=lambda x: x[1], reverse=True)
-        
-        return {
-            'query_text': query,
-            'top_terms': non_zero[:20]
-        }
 
-
-# Singleton instance - initialized once at module load
+# Singleton instance
 _nlp_model = None
 
 def get_nlp_model() -> CareerNLPModel:
-    """Get or create the singleton NLP model instance."""
     global _nlp_model
     if _nlp_model is None:
         _nlp_model = CareerNLPModel()
