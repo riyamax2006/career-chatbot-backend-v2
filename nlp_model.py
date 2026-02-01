@@ -165,7 +165,10 @@ class CareerNLPModel:
         
         # Add user-provided skills (most important for matching)
         if skills and skills.strip():
-            query_parts.append(skills.strip())
+            # Repeat skills 3x to boost their TF-IDF weight relative to the template text
+            # This ensures generic skills like "communication" aren't drowned out
+            skill_text = (skills.strip() + " ") * 3
+            query_parts.append(skill_text)
         
         return ' '.join(query_parts)
     
@@ -200,16 +203,16 @@ class CareerNLPModel:
     
     def get_recommendations(self, salary_range: str, time_horizon: str,
                            risk_appetite: str, skills: str = None,
-                           top_k: int = 5) -> list:
+                           top_k: int = None) -> list:
         """
-        Get top-k career recommendations based on NLP similarity.
+        Get career recommendations based on NLP similarity.
         
         Args:
             salary_range: 'entry' | 'growth' | 'premium'
             time_horizon: 'immediate' | 'mid_term' | 'long_term'
             risk_appetite: 'low' | 'medium' | 'high'
             skills: Optional free-text skills string
-            top_k: Number of recommendations to return
+            top_k: Number of recommendations to return (None = all)
             
         Returns:
             List of dicts with career info and similarity scores
@@ -221,7 +224,9 @@ class CareerNLPModel:
         
         # Build results with career data
         results = []
-        for idx, score in scored_indices[:top_k]:
+        limit = top_k if top_k is not None else len(scored_indices)
+        
+        for idx, score in scored_indices[:limit]:
             career = CAREERS[idx]
             results.append({
                 'career': career,
