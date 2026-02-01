@@ -98,36 +98,40 @@ def get_salary_for_horizon(career: dict, time_horizon: str) -> float:
     return career["salaries"].get(horizon_key, 0)
 
 
-def check_salary_constraint(career: dict, salary_range: str, time_horizon: str) -> tuple:
+def calculate_salary_score(career: dict, salary_range: str, time_horizon: str) -> float:
     """
-    Check if career's salary matches user's target range.
+    Calculate a soft score (0.0 - 1.0) for salary fit.
     
     Returns:
-        (matches: bool, multiplier: float)
-        multiplier is used to boost/penalize score based on fit
+        Float score between 0.0 and 1.0
     """
     salary = get_salary_for_horizon(career, time_horizon)
     min_sal, max_sal = SALARY_BOUNDS.get(salary_range, (0, float("inf")))
     
+    # Perfect match: In range
     if min_sal <= salary <= max_sal or (max_sal == float("inf") and salary >= min_sal):
-        return True, 1.0  # Perfect match
+        return 1.0
     
-    # Check how close it is
-    if salary < min_sal:
-        # Below range - penalize based on gap
-        gap_ratio = salary / min_sal if min_sal > 0 else 0
-        return False, max(0.3, gap_ratio)
-    else:
-        # Above range - slight boost (user might like higher salary)
-        return False, 0.8
+    # Above range: Good but slightly penalized (0.8) to prefer exact matches
+    if salary > max_sal and max_sal != float("inf"):
+        return 0.8
+    
+    # Below range: Decay based on how far off it is
+    # Score = 1.0 - 0.2 * (missing_ratio)
+    if min_sal > 0:
+        ratio = salary / min_sal
+        # Linear decay mapping 1.0 -> 0.0 to 0.8 -> 0.2
+        return max(0.2, 0.2 + (0.6 * ratio))
+        
+    return 0.2
 
 
-def check_risk_constraint(career: dict, risk_appetite: str) -> tuple:
+def calculate_risk_score(career: dict, risk_appetite: str) -> float:
     """
-    Check if career's risk matches user's appetite.
+    Calculate a soft score (0.0 - 1.0) for risk fit.
     
     Returns:
-        (matches: bool, multiplier: float)
+        Float score between 0.0 and 1.0
     """
     career_risk = career["risk"].lower()
     risk_levels = ["low", "medium", "high"]
@@ -138,24 +142,25 @@ def check_risk_constraint(career: dict, risk_appetite: str) -> tuple:
         
         # User's appetite is a ceiling
         if career_idx <= user_idx:
-            return True, 1.0  # Within tolerance
-        else:
-            # Career is riskier than user wants
-            gap = career_idx - user_idx
-            return False, max(0.4, 1.0 - (gap * 0.3))
+            return 1.0  # Perfect fit (within tolerance)
+        
+        # Career is riskier than user wants
+        # Gap of 1 (Low user vs Med career) -> 0.7
+        # Gap of 2 (Low user vs High career) -> 0.4
+        gap = career_idx - user_idx
+        return max(0.2, 1.0 - (gap * 0.3))
+        
     except ValueError:
-        return False, 0.5
+        return 0.5
 
 
 def get_recommendations(salary_range: str, time_horizon: str, 
                         risk_appetite: str, skills: str = None) -> tuple:
     """
-    Get career recommendations using NLP similarity + business constraints.
+    Get career recommendations using Weighted Additive Scoring.
     
-    This is the main entry point that combines:
-    1. TF-IDF similarity scores from NLP model
-    2. Salary range constraints
-    3. Risk tolerance matching
+    Formula:
+    Score = (W_nlp * NLP_Score) + (W_salary * Salary_Score) + (W_risk * Risk_Score)
     
     Args:
         salary_range: 'entry' | 'growth' | 'premium'
@@ -166,60 +171,85 @@ def get_recommendations(salary_range: str, time_horizon: str,
     Returns:
         Tuple of (recommended_careers, feasibility_note)
     """
-    # Get NLP model and compute similarity scores
+    # 1. Get NLP scores for ALL careers
     nlp_model = get_nlp_model()
+    # top_k=None returns all
     nlp_results = nlp_model.get_recommendations(
-        salary_range, time_horizon, risk_appetite, skills, top_k=16
+        salary_range, time_horizon, risk_appetite, skills, top_k=None
     )
     
-    # Apply business constraints to NLP results
+    # 2. Weights Configuration
+    W_NLP = 0.4
+    W_SALARY = 0.3
+    W_RISK = 0.3
+    
     scored_careers = []
     
     for result in nlp_results:
         career = result['career']
         nlp_score = result['similarity_score']
         
-        # Apply constraint multipliers
-        salary_ok, salary_mult = check_salary_constraint(career, salary_range, time_horizon)
-        risk_ok, risk_mult = check_risk_constraint(career, risk_appetite)
+        # Calculate Component Scores (0.0 - 1.0)
+        salary_score = calculate_salary_score(career, salary_range, time_horizon)
+        risk_score = calculate_risk_score(career, risk_appetite)
         
-        # Combined score: NLP similarity * constraint multipliers
-        final_score = nlp_score * salary_mult * risk_mult
-        
-        # Determine if career meets core constraints
-        meets_constraints = salary_ok and risk_ok
+        # Calculate Weighted Total
+        total_score = (W_NLP * nlp_score) + (W_SALARY * salary_score) + (W_RISK * risk_score)
         
         scored_careers.append({
             'career': career,
+            'role': career['role'],
+            'total_score': total_score,
             'nlp_score': nlp_score,
-            'final_score': final_score,
-            'salary_fit': salary_ok,
-            'risk_fit': risk_ok,
-            'meets_all': meets_constraints
+            'salary_score': salary_score,
+            'risk_score': risk_score
         })
     
-    # Sort by final score (NLP + constraints combined)
-    scored_careers.sort(key=lambda x: x['final_score'], reverse=True)
+    # 3. Sort by Total Score
+    scored_careers.sort(key=lambda x: x['total_score'], reverse=True)
     
-    # Build output
+    # 4. Format Output
     recommended = []
     horizon_key = TIME_HORIZON_MAP.get(time_horizon, "entry")
     
-    for item in scored_careers[:3]:  # Top 3
+    # We take the top 3 matches
+    # But we want to ensure they aren't complete garbage matches (e.g. score < 0.4)
+    # However, since we must return something, we just return top 3.
+    
+    for item in scored_careers[:3]:
         career = item['career']
         salary = career['salaries'].get(horizon_key, 0)
         
-        # Build reason from NLP match + career description
-        reason_parts = [career['description'].split('.')[0] + '.']  # First sentence
-        reason_parts.append(f"Projected {horizon_key}-level salary: {salary} LPA.")
-        reason_parts.append(f"Match confidence: {item['final_score']:.0%}.")
+        # Build explanation
+        # "High match (85%). Matches salary expectations. Slightly higher risk than requested."
+        reasons = []
+        
+        # NLP Context
+        if item['nlp_score'] > 0.3:
+            reasons.append(f"role match ({item['nlp_score']:.0%}).")
+        else:
+            reasons.append("Potential role match.")
+            
+        # Salary Context
+        if item['salary_score'] == 1.0:
+            reasons.append(f"Fits salary range ({salary} LPA).")
+        elif item['salary_score'] == 0.8:
+            reasons.append(f"Exceeds salary target ({salary} LPA).")
+        else:
+            reasons.append(f"Salary: {salary} LPA.")
+            
+        # Risk Context
+        if item['risk_score'] < 1.0:
+            reasons.append("Higher risk profile.")
+            
+        reason_str = " ".join(reasons)
         
         recommended.append({
             "role": career['role'],
-            "reason": ' '.join(reason_parts)
+            "reason": f"Match Score: {item['total_score']:.0%}. {reason_str}"
         })
     
-    # Generate feasibility note
+    # 5. Generate Feasibility Note
     feasibility_note = generate_feasibility_note(
         scored_careers, salary_range, time_horizon, risk_appetite
     )
@@ -229,36 +259,25 @@ def get_recommendations(salary_range: str, time_horizon: str,
 
 def generate_feasibility_note(scored_careers: list, salary_range: str,
                               time_horizon: str, risk_appetite: str) -> str:
-    """Generate helpful feasibility note based on results."""
+    """Generate helpful feasibility note based on top scores."""
     
-    # Count how many meet all constraints
-    meets_all = sum(1 for c in scored_careers if c['meets_all'])
+    top_score = scored_careers[0]['total_score'] if scored_careers else 0
     
-    if meets_all >= 3:
-        return "Recommendations matched using TF-IDF similarity with high confidence."
-    
-    if meets_all == 0:
-        # No perfect matches - explain why
+    if top_score > 0.85:
+        return "Excellent matches found aligned with your profile and preferences."
+    elif top_score > 0.70:
+        return "Good matches found. Some trade-offs in salary or risk may be present."
+    elif top_score > 0.50:
+        return "Moderate matches. Recommendations balance your constraints with available options."
+    else:
+        # Low scores - give specific advice
         notes = []
-        
-        if salary_range == "premium" and time_horizon == "immediate":
-            notes.append(
-                "Premium salaries are rarely achievable immediately. "
-                "Consider extending timeline to mid_term or long_term."
-            )
-        
         if salary_range == "premium" and risk_appetite == "low":
-            notes.append(
-                "Low-risk premium careers are rare. "
-                "Consider PSU Officer or Chartered Accountant for stable high pay."
-            )
-        
+            notes.append("High salary with low risk is rare.")
+        if salary_range == "premium" and time_horizon == "immediate":
+            notes.append("Starting directly at premium salary is difficult.")
+            
         if not notes:
-            notes.append(
-                "Limited matches for your exact criteria. "
-                "Showing closest matches based on NLP similarity."
-            )
-        
-        return ' '.join(notes)
-    
-    return f"Found {meets_all} strong matches. Showing top results ranked by NLP similarity."
+            notes.append("Your criteria are very restrictive.")
+            
+        return f"Limited strong matches (Top score: {top_score:.0%}). { ' '.join(notes) } Consider broadening your search."
