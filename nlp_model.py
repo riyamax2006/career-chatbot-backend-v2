@@ -14,20 +14,9 @@ from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import re
 
-from dataset import CAREERS
+from dataset import CAREERS, get_dataset_vocabulary
 
-# Terms to explicitly REMOVE from NLP query to prevent rules from polluting semantic matching
-IGNORE_TERMS = {
-    # Salary terms
-    "salary", "lpa", "compensation", "money", "pay", "earning", "entry", "growth", "premium", "rich", "wealth",
-    "high paying", "low paying", "0 to 6", "6 to 12", "above 12",
-    # Risk terms
-    "risk", "stable", "secure", "security", "startup", "corporate", "government", "entrepreneurial", "predictable",
-    "balanced", "volatile", "safe", "chance",
-    # Timeline terms
-    "immediate", "urgent", "start", "now", "years", "long term", "mid term", "future", "career path",
-    "progression", "experience", "seniority", "junior", "mid level", "senior level"
-}
+
 
 class CareerNLPModel:
     """
@@ -44,6 +33,8 @@ class CareerNLPModel:
             min_df=1,
             max_df=1.0  # Allow terms that appear in all documents if corpus is small
         )
+        self.dataset_vocab = get_dataset_vocabulary()
+
         self.career_vectors = None
         self.career_corpus = None
         self._build_corpus()
@@ -80,71 +71,60 @@ class CareerNLPModel:
         self.career_vectors = self.vectorizer.fit_transform(self.career_corpus)
         print(f"[NLP Model] Trained on {len(CAREERS)} careers")
     
-    def _clean_text(self, text: str) -> str:
-        """Remove rule-based terms from text."""
-        if not text:
-            return ""
-        
-        # Tokenize and filter
-        words = text.lower().split()
-        cleaned = [w for w in words if w not in IGNORE_TERMS]
-        
-        # Also remove multi-word phrases (naive approach)
-        text_clean = " ".join(cleaned)
-        for term in IGNORE_TERMS:
-            if " " in term: # If it's a phrase in ignore list
-                text_clean = text_clean.replace(term, "")
-                
-        return text_clean.strip()
+
 
     def _expand_synonyms(self, text: str) -> str:
-        """Expand domain terms with synonyms to improve matching."""
-        # Simple synonym mapping for common career domains
-        synonyms = {
-            "healthcare": "medical doctor hospital health physician nurse",
-            "medical": "healthcare doctor hospital health",
-            "tech": "technology software engineering developer data ai",
-            "programming": "coding software development engineering",
-            "ai": "artificial intelligence machine learning data science",
-            "finance": "banking investment money accounting",
-            "business": "management corporate strategy consulting",
+        intent_map = {
+            "treat": ["patient", "care", "medical"],
+            "diagnose": ["diagnosis", "medical", "clinical"],
+            "heal": ["treatment", "care"],
+            "illness": ["disease", "medical", "health"],
+    
+            "stock": ["finance", "investment", "market"],
+            "stocks": ["finance", "investment", "market"],
+            "profit": ["revenue", "earnings", "finance"],
+            "trading": ["investment", "market"],
+    
+            "business": ["management", "strategy"],
+            "market": ["finance", "business"],
+    
+            "code": ["software", "programming", "development"],
+            "coding": ["software", "programming"],
+            "ai": ["machine", "learning", "data"],
+            "data": ["analytics", "analysis"],
         }
-        
+    
         words = text.lower().split()
         expanded = list(words)
-        
+    
         for word in words:
-            if word in synonyms:
-                expanded.append(synonyms[word])
-                
+            if word in intent_map:
+                for candidate in intent_map[word]:
+                    if candidate in self.dataset_vocab:
+                        expanded.append(candidate)
+    
         return " ".join(expanded)
+
 
     def _build_user_query(self, skills: str = "") -> str:
         """
         Construct a text query from user inputs.
-        
+    
         Args:
             skills: User provided skills/intent
-            
+    
         Returns:
             Query string for TF-IDF matching
         """
         if not skills:
             return ""
-
-        # 1. Clean the input (remove salary/risk/timeline terms)
-        clean_skills = self._clean_text(skills)
-        
-        if not clean_skills:
-            return ""
-
-        # 2. Expand Synonyms
-        expanded_skills = self._expand_synonyms(clean_skills)
-
-        # 3. Construct Query: Skills repeated 3 times
-        # Repetition emphasizes these terms over any background noise
+    
+        # DO NOT clean text — keep full intent
+        expanded_skills = self._expand_synonyms(skills.lower())
+    
+        # Repeat to strengthen TF-IDF signal
         query = f"{expanded_skills} {expanded_skills} {expanded_skills}"
-        
+    
         return query
     
     def get_recommendations(self, skills: str = "", top_k: int = None) -> list:
