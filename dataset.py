@@ -328,7 +328,7 @@ TIME_HORIZON_MAP = {
 def get_dataset_vocabulary():
     vocab = set()
 
-    for career in CAREERS_DATA:
+    for career in CAREERS:
         for field in ["domain", "description"]:
             if field in career:
                 vocab.update(career[field].lower().split())
