@@ -14,8 +14,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import re
 
-from dataset import CAREERS
-from dataset import get_dataset_vocabulary
+from dataset import CAREERS, get_dataset_vocabulary
 
 
 
