@@ -109,147 +109,57 @@ def calculate_risk_score(career: dict, risk_appetite: str) -> float:
 def get_domain_constraints(skills: str) -> list:
     """
     Check if skills contain explicit domain keywords.
-    Returns list of allowed career categories that match the dataset.
+    Returns list of allowed career tags/categories if found.
     """
-    if not skills:
-        return []
-        
     skills_lower = skills.lower()
     
-    # Map keywords to actual DATASET categories
-    # Keys are the actual category names from dataset.py
+    # Define domain mappings
     domains = {
-        "Technology": [
-            # Programming & Development
-            "technology", "tech", "software", "programming", "coding", "developer", "development",
-            "engineer", "engineering", "computer", "it", "information technology",
-            # Languages & Tools
-            "python", "java", "javascript", "react", "node", "sql", "database", "web", "mobile", 
-            "app", "api", "backend", "frontend", "fullstack",
-            # Specializations
-            "data", "ai", "artificial intelligence", "machine learning", "ml", "deep learning",
-            "cloud", "aws", "azure", "devops", "cybersecurity", "security", "cyber", "network",
-            # Activities
-            "build", "code", "debug", "deploy", "algorithm", 
-            # Data Science
-            "data science", "data analysis", "analytics", "big data", "visualization", 
-            "statistics", "tensorflow", "scikit"
-        ],
-        
-        "Healthcare": [
-            # Medical professionals
-            "medical", "medicine", "doctor", "physician", "surgeon", "healthcare", "health",
-            "mbbs", "md", "specialist",
-            # Patient care
-            "patient", "patients", "diagnose", "diagnosis", "treatment", "clinical", "clinic",
-            "care", "cure", "heal", "illness", "disease",
-            # Nursing
-            "nurse", "nursing", "patient care",
-            # Hospital & Facilities
-            "hospital", "emergency", "surgery", "operate", "operating room",
-            # Public Health
-            "public health", "epidemiology", "policy", "community health",
-            # Research
-            "medical research", "clinical trials", "pharmaceutical", "pharma", "laboratory",
-            # Administration
-            "healthcare administrator", "hospital management",
-            # Related terms
-            "anatomy", "physiology", "pathology"
-        ],
-        
-        "Finance": [
-            # Core finance
-            "finance", "financial", "money", "banking", "bank", "investment", "investing",
-            "accounting", "accountant", "audit", "auditing", "ca", "chartered accountant",
-            # Markets & Trading
-            "stock", "trading", "trader", "market", "equity", "bonds", "portfolio",
-            "wall street", "wealth", "asset", "fund",
-            # Analysis
-            "financial analysis", "valuation", "financial modeling",
-            # Activities
-            "tax", "taxation", "ifrs", "budget", "revenue", "profit"
-        ],
-        
-        "Business": [
-            # Management & Consulting
-            "business", "management", "manager", "consulting", "consultant", "strategy",
-            "corporate", "enterprise", "company", "mba", "bcg", "mckinsey", "bain",
-            # Entrepreneurship
-            "startup", "entrepreneur", "entrepreneurship", "founder", "innovation",
-            # Operations
-            "operations", "operational", "administration",
-            # Activities
-            "lead", "manage", "organize"
-        ],
-        
-        "Marketing": [
-            # Digital Marketing
-            "marketing", "digital marketing", "digital", "social media", "advertising",
-            "seo", "sem", "google ads", "facebook ads", "content marketing", "email marketing",
-            # Activities
-            "campaign", "branding", "brand", "creative", "conversion"
-        ],
-        
-        "HR": [
-            # Human Resources
-            "hr", "human resources", "recruitment", "recruiter", "hiring", "talent",
-            "employee", "people", "onboarding", "payroll", "benefits",
-            # Activities
-            "employee relations", "performance management", "training"
-        ],
-        
-        "Government": [
-            # Government & Public Sector
-            "government", "govt", "public sector", "psu", "civil services",
-            "upsc", "ias", "ips", "gate", "administrative",
-            # Organizations
-            "ongc", "bhel", "ntpc", "iocl",
-            # Characteristics
-            "stable", "secure", "pension", "clerk", "state government"
-        ],
-        
-        "Creative": [
-            # Design
-            "design", "designer", "graphic", "graphics", "ui", "ux", "user experience", 
-            "user interface", "creative", "art", "artist", "visual",
-            # Tools
-            "photoshop", "illustrator", "figma", "adobe",
-            # Writing
-            "writer", "writing", "content", "copywriting", "blogs", "articles",
-            # Activities
-            "create", "branding"
-        ],
-        
-        "Sales": [
-            # Sales roles
-            "sales", "selling", "business development", "bd", "leads", "lead generation",
-            "b2b", "commission",
-            # Activities
-            "cold calling", "outreach", "prospecting", "closing", "negotiate"
-        ]
+        "medical": ["medical", "healthcare", "doctor", "health"],
+        "healthcare": ["medical", "healthcare", "doctor", "health"],
+        "hospital": ["medical", "healthcare", "doctor", "health"],
+        "tech": ["technology", "engineering", "software", "it", "computer", "data"],
+        "programming": ["technology", "engineering", "software", "it"],
+        "finance": ["finance", "banking", "investment", "accounting"],
+        "business": ["business", "management", "consulting"],
+        "law": ["legal", "law"],
     }
     
     constraints = set()
-    for category_name, keywords in domains.items():
-        # Check if ANY keyword appears in skills
-        for keyword in keywords:
-            if keyword in skills_lower:
-                constraints.add(category_name)
-                break  # Found a match for this domain, move to next
+    for key, keywords in domains.items():
+        if key in skills_lower:
+             constraints.add(key)
     
     return list(constraints)
 
 
 def check_domain_match(career: dict, constraints: list) -> bool:
-    """Return True if career's category matches ANY of the constraint categories."""
+    """Return True if career matches ANY of the constraints."""
     if not constraints:
-        return True  # No constraints = allow all
+        return True
+        
+    # Check text fields for domain presence
+    text = (career['role'] + " " + career['category'] + " " + career.get('description', '')).lower()
     
-    # Direct category match (this is the clean, simple way)
-    career_category = career.get('category', '')
-    
-    # Check if career's category is in the allowed constraints
-    return career_category in constraints
+    for domain in constraints:
+        # Check against simple heuristic of domain mapping
+        # This is a simplified check. Ideally we use the category.
+        if domain == "medical" or domain == "healthcare":
+            if "health" in text or "doctor" in text or "medic" in text or "nurse" in text:
+                return True
+        elif domain == "tech" or domain == "programming":
+            if "tech" in text or "software" in text or "developer" in text or "engineer" in text or "data" in text:
+                return True
+        elif domain == "finance":
+            if "finance" in text or "bank" in text or "invest" in text:
+                return True
+        # Add other domains as needed
+        
+        # Fallback: check if domain keyword itself is in text
+        if domain in text:
+            return True
+            
+    return False
 
 
 def get_recommendations(salary_range: str, time_horizon: str, 
