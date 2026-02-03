@@ -325,3 +325,17 @@ TIME_HORIZON_MAP = {
     "mid_term": "mid",
     "long_term": "senior"
 }
+def get_dataset_vocabulary():
+    vocab = set()
+
+    for career in CAREERS_DATA:
+        for field in ["domain", "description"]:
+            if field in career:
+                vocab.update(career[field].lower().split())
+
+        if "skills" in career:
+            for skill in career["skills"]:
+                vocab.update(skill.lower().split())
+
+    return vocab
+
